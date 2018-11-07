@@ -1,0 +1,332 @@
+<html>
+
+<head>
+    <link href="https://fonts.googleapis.com/css?family=Roboto" rel="stylesheet">
+    <style>
+        * {
+            font-family: Roboto;
+        }
+    </style>
+    <script src="sid11569.js"></script>
+    <script src="https://code.jquery.com/jquery-3.3.1.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/5.7.0/d3.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lodash@4.17.11/lodash.min.js"></script>
+</head>
+
+<body>
+    <div id="viewer" class="display: flex;">
+        <div style="width: 100vw; background-color: black; color: white; padding: 1em 0.5em;">
+            <p style="font-size: 1.5em; margin-bottom: 0; margin-top: 16px;">FF Wafer Viewer</p>
+            <p style="font-size: 1em; margin-top: 0.25em;">with Vue.js, D3, lodash &amp; jQuery</p>
+        </div>
+        <div style="display: flex; background: black; color: white; border: 1px solid #eeeeee;">
+            <svg v-bind:width="totalWidth" v-bind:height="totalHeight" style="padding: 0.5em; flex-grow: 2;">
+                <g id="xAxis"/>
+                <g id="yAxis"/>
+                <rect v-for="die in dies" :key="die.id"
+                class="die"
+                v-bind:x="die.svg.x" v-bind:y="die.svg.y"
+                v-bind:width="die.svg.width" v-bind:height="die.svg.height"
+                v-bind:fill="die.svg.fill" v-bind:style="dieStyleObject(die)"
+                    v-on:mouseover="setAsSelected(die)" />
+            </svg>
+            <div style="padding: 0.5em;  border: 1px solid #eeeeee; flex-grow: 1">
+                <!-- load selectin -->
+                <h5>Load</h5>
+                <button v-on:click="loadSid11569">SID 11569</button>
+                <!-- wafer info -->
+                <h5>Wafer</h5>
+                <p>{{dies.length}} dies</p>
+                <p>{{width}} px x {{height}} px</p>
+                <p>Loaded in {{loadTimeInMs}} ms</p>
+                <!-- display panel-->
+                <div v-if="selectedDie !== null" style="border-top: 1px solid eeeeee;">
+                    <h5>Die infomation</h5>
+                    <p>x : {{selectedDie.coordinate.x}}, y : {{selectedDie.coordinate.y}}</p>
+                    <p>Softbin: {{selectedDie.softbin}}</p>
+                    <p>Hardtbin: {{selectedDie.hardbin}}</p>
+                    <p>Pass/Fail: {{selectedDie.pass === 1 ? "Pass" : "Fail" }}</p>
+                    <p>Test Time: {{selectedDie.testtime}}</p>
+                    <p>Index Time: {{selectedDie.indextime}}</p>
+                </div>
+                <!-- filter panel-->
+                <div style="border-top: 1px solid eeeeee;">
+                    <h5>Filter</h5>
+                    <div style="display:flex; flex-flow: column">
+                        <button v-on:click="reset">Reset</button>
+                        <button v-on:click="showSoftbinInColorScale">Show softbin color scale</button>
+                        <button v-on:click="highlightHardbinNumberLessThan5">Highlight HB num < 5</button> <button
+                                v-on:click="highlightPassFail">Highlight pass fail</button>
+                    </div>
+                    <p>Softbin</p>
+                    <select v-model="selectedSoftbinToHighlight" v-on:change="highlightSelectedSoftbin">
+                        <option v-for="sb in uniqueSoftbins" v-bind:value="sb">Softbin {{sb}}</option>
+                    </select>
+                    <p>Hardbin</p>
+                    <select v-model="selectedHardbinToHighlight" v-on:change="highlightSelectedHardbin">
+                        <option v-for="hb in uniqueHardbins" v-bind:value="hb">Hardbin {{hb}}</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+    </div>
+    <script>
+        var viewerVm = new Vue({
+            el: "#viewer",
+            data: function () {
+                return {
+                    paddingLeft: 50,
+                    paddingTop: 50,
+                    width: 700,
+                    height: 700,
+                    inputData: [],
+                    xExtent: null,
+                    yExtent: null,
+                    xScale: null,
+                    yScale: null,
+                    xAxis: null,
+                    yAxis: null,
+                    zoom: null,
+                    dies: [],
+                    uniqueSoftbins: [],
+                    uniqueHardbins: [],
+                    selectedDie: null,
+                    selectedSoftbinToHighlight: -1,
+                    selectedHardbinToHighlight: -1,
+                    loadTimeInMs: 0
+                }
+            },
+            computed: {
+                totalWidth: function() {
+                    return this.width + this.paddingLeft * 2
+                },
+                totalHeight: function() {
+                    return this.height + this.paddingTop * 2
+                }
+            },
+            methods: {
+                load: function (data) {
+                    // Load raw data and create drawings
+
+                    var startTime = Date.now()
+
+                    // Save origin data for manipulation later
+                    this.inputData = data
+
+                    // get unique bins
+                    this.uniqueSoftbins = _.uniqBy(data, x => x.softbin).map(x => x.softbin).sort()
+                    this.uniqueHardbins = _.uniqBy(data, x => x.hardbin).map(x => x.hardbin).sort()
+
+                    // Calculate min max for each axis
+                    this.xExtent = d3.extent(data, d => d.coordinate.x)
+                    this.yExtent = d3.extent(data, d => d.coordinate.y)
+
+                    // Calculate the SVG coordinates for each die's x & y
+                    this.xScale = d3.scaleBand()
+                        .domain(numRange(this.xExtent[0], this.xExtent[1]))
+                        .range([0, this.width])
+
+                    this.yScale = d3.scaleBand()
+                        .domain(numRange(this.yExtent[0], this.yExtent[1]))
+                        .range([0, this.height])
+
+                    // Setup die's SVG attributes
+                    this.dies = this.setupDefaultSvgAttributes(data)
+
+                    // Setup x axis as if it's a bottom axis
+                    // to display marker based on the x's min max at interval of 10
+                    this.xAxis = d3.axisTop()
+                        .scale(this.xScale)
+                        .tickValues(d3.range(this.xExtent[0], this.xExtent[1], 10))
+
+                    // draw the top axis to location of (x: 50, y: 20)
+                    var topAxis = d3.select("#xAxis")
+                    .attr("transform", `translate(${this.paddingTop}, 20)`)
+                    .call(this.xAxis)
+                    
+                    // Setup y axis
+                    this.yAxis = d3.axisLeft()
+                        .scale(this.yScale)
+                        .tickValues(d3.range(this.yExtent[0], this.yExtent[1], 10))
+
+                    // draw left axis to x:20, y: 50
+                    var leftAxis = d3.select("#yAxis")
+                        .attr("transform", `translate(20,${this.paddingLeft})`)
+                        .call(this.yAxis)
+
+                    // // create zoom handler
+                    this.zoom = d3.zoom()
+                    .scaleExtent([1, 5])
+                    .translateExtent([[0, 0], [this.width, this.height]])
+                    .on("zoom", this.zoomed);
+
+                    d3.select("svg").call(this.zoom)
+
+                    var endTime = Date.now()
+                    this.loadTimeInMs = endTime - startTime
+                },
+                zoomed: function() {
+                    d3.selectAll("svg").attr("transform", d3.event.transform);
+                    // d3.select("#xAxis").call(this.xAxis.scale(d3.event.transform.rescaleX(this.xScale)));
+                    // d3.select("#yAxis").call(this.yAxis.scale(d3.event.transform.rescaleX(this.yScale)));
+                    // gX.call(xAxis.scale(d3.event.transform.rescaleX(x)));
+                    // gY.call(yAxis.scale(d3.event.transform.rescaleY(y)));
+                },
+                setupDefaultSvgAttributes: function (data) {
+                    // Setup SVG attributes
+                    var result = []
+                    data.forEach(d => {
+                        var die = Object.assign({}, d)
+                        die.id = `${d.coordinate.x},${d.coordinate.y}`
+                        // add x: 50, y: 50 padding so we can draw axis
+                        die.svg = {
+                            x: this.xScale(d.coordinate.x) + this.paddingLeft,
+                            y: this.yScale(d.coordinate.y) + this.paddingTop,
+                            width: this.xScale.bandwidth(),
+                            height: this.yScale.bandwidth(),
+                            fill: "#eeeeee"
+                        }
+
+                        result.push(die)
+                    })
+                    return result
+                },
+                setAsSelected: function (die) {
+                    // Set the die as selected die
+                    this.selectedDie = die
+                },
+                dieStyleObject: function (die) {
+                    // Return the approriate styles based on attributes
+                    var result = {};
+                    if (_.isEmpty(this.selectedDie)) {
+                        return true
+                    }
+
+                    if (this.selectedDie.id === die.id) {
+                        result["stroke"] = "black"
+                        result["stroke-width"] = 2
+                    }
+
+                    return result
+                },
+                reset: function () {
+                    this.dies = this.setupDefaultSvgAttributes(this.inputData)
+                },
+                loadSid11569: function () {
+                    // Make a copy
+                    var splitted = Object.assign({}, sid11569)
+                    // split
+                    Object.keys(splitted).forEach(key => {
+                        splitted[key] = _.split(splitted[key], " ")
+                    })
+                    // Construct
+                    var result = []
+                    splitted.die_id.forEach((dieId, index) => {
+                        result.push({
+                            coordinate: {
+                                x: parseInt(dieId.split(",")[0]),
+                                y: parseInt(dieId.split(",")[1])
+                            },
+                            softbin: parseInt(splitted.softbin[index]),
+                            hardbin: parseInt(splitted.hardbin[index]),
+                            pass: parseInt(splitted.pass[index]),
+                            testtime: parseFloat(splitted.testtime[index]),
+                            indextime: parseFloat(splitted.indextime[index])
+                        })
+                    })
+
+                    this.load(result)
+                },
+                showSoftbinInColorScale: function () {
+
+                    var softbinExtent = d3.extent(this.inputData, d => d.softbin)
+                    var softbinColorScale = d3.scaleSequential()
+                        .domain(softbinExtent)
+                        .interpolator(d3.interpolateSpectral)
+
+                    var result = this.setupDefaultSvgAttributes(this.inputData)
+                    result.forEach(d => {
+                        d.svg.fill = softbinColorScale(d.softbin)
+                    })
+
+                    this.dies = result
+                },
+                highlightHardbinNumberLessThan5: function () {
+                    var result = this.setupDefaultSvgAttributes(this.inputData)
+                    result.forEach(d => {
+                        if (d.hardbin < 5) {
+                            d.svg.fill = "red"
+                        }
+                    })
+                    this.dies = result
+                },
+                highlightSelectedSoftbin: function () {
+                    var result = this.setupDefaultSvgAttributes(this.inputData)
+                    result.forEach(d => {
+                        if (d.softbin == this.selectedSoftbinToHighlight) {
+                            d.svg.fill = "orange"
+                        }
+                    })
+                    this.dies = result
+                },
+                highlightSelectedHardbin: function () {
+                    var result = this.setupDefaultSvgAttributes(this.inputData)
+                    result.forEach(d => {
+                        if (d.hardbin == this.selectedHardbinToHighlight) {
+                            d.svg.fill = "orange"
+                        }
+                    })
+                    this.dies = result
+                },
+                highlightPassFail: function () {
+                    var result = this.setupDefaultSvgAttributes(this.inputData)
+                    result.forEach(d => {
+                        if (d.pass === 0) {
+                            d.svg.fill = "red"
+                        } else {
+                            d.svg.fill = "green"
+                        }
+                    })
+                    this.dies = result
+                }
+            }
+        })
+
+        function numRange(start, end) {
+            var result = []
+            for (var x = start; x <= end; x++) {
+                result.push(x)
+            }
+            return result
+        }
+
+        function generateRandomDies(number) {
+            var result = []
+            for (var x = 0; x < number; x++) {
+                for (var y = 0; y < number; y++) {
+                    result.push({
+                        coordinate: {
+                            x: x,
+                            y: y
+                        },
+                        softbin: (x + y),
+                        hardbin: Math.max(x, y) % Math.min(x, y)
+                    })
+                }
+            }
+            return result
+        }
+
+        $(() => {
+            // var rawData = generateRandomDies(100)
+            // viewerVm.load(rawData)
+        })
+
+    </script>
+</body>
+
+
+
+</html>
