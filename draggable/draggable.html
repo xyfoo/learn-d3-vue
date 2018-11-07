@@ -1,0 +1,94 @@
+<html>
+
+<head>
+    <script src="https://code.jquery.com/jquery-3.3.1.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/5.7.0/d3.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lodash@4.17.11/lodash.min.js"></script>
+</head>
+
+<body>
+
+    <h2>Draggable</h2>
+    <svg id="svgArea" :width="area.width" :height="area.height" style="border: 1px solid black">
+        <rect v-for="item in items" :id="item.id" :x="item.x" :y="item.y" :width="item.width" :height="item.height"
+            :fill="item.fill" />
+    </svg>
+    <script>
+
+        $(function () {
+            var ds = function onDragStarted() {
+                console.log("drag", "start")
+            }
+
+            var dd = function onDragging() {
+                // Get item height
+                var draggedWidth = d3.select(this).attr("width")
+                var draggedHeight = d3.select(this).attr("height")
+                // Calculate max x amd y without getting out of bound
+                var maxX = svgArea.area.width - draggedWidth
+                var maxY = svgArea.area.height - draggedHeight
+
+                var finalX = d3.event.x
+                var finalY = d3.event.y
+
+                if(finalX < 0) {
+                    finalX = 0
+                }
+
+                if (finalX > maxX) {
+                    finalX = maxX
+                }
+
+                if (finalY < 0) {
+                    finalY = 0
+                }
+
+                if (finalY > maxY) {
+                    finalY = maxY
+                }
+
+                d3.select(this)
+                    .attr("x", finalX)
+                    .attr("y", finalY)
+
+                console.log("dragged-mouse", `x: ${d3.event.x}, y: ${d3.event.y}`)
+                console.log("dragged-normalized", `x: ${finalX}, y: ${finalY}`)
+            }
+
+            var de = function onDragEnded() {
+                console.log("drag", "ended")
+            }
+
+            d3.selectAll("rect").call(d3.drag().on("start", ds).on("drag", dd).on("end", de))
+        })
+
+        var svgArea = new Vue({
+            el: "#svgArea",
+            data: function () {
+                return {
+                    area: {
+                        width: 900,
+                        height: 600
+                    },
+                    items: [
+                        {
+                            id: 1,
+                            type: "rect",
+                            x: 0,
+                            y: 0,
+                            width: 50,
+                            height: 50,
+                            fill: "red"
+                        }
+                    ]
+                }
+            }
+        })
+
+
+
+    </script>
+</body>
+
+</html>
